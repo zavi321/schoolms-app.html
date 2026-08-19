@@ -110,14 +110,25 @@
   .amt-neg{color:var(--rust);font-weight:600;font-size:14px;}
   .del-btn{background:none;border:none;color:var(--rust);font-size:14px;}
   .loading{min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--navy);font-size:14px;}
+
+  .card-table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;-webkit-overflow-scrolling:touch;}
+  table.card-table{border-collapse:collapse;width:100%;min-width:820px;font-size:11px;background:#fff;}
+  table.card-table th{background:var(--navy);color:var(--gold-soft);font-weight:600;padding:7px 8px;text-align:center;white-space:nowrap;position:sticky;top:0;}
+  table.card-table td{padding:7px 8px;text-align:center;border-bottom:1px solid var(--line);white-space:nowrap;}
+  table.card-table tr:last-child td{border-bottom:none;}
+  table.card-table td.mo{font-weight:600;color:var(--navy);text-align:left;}
+  body.ur table.card-table td.mo{text-align:right;}
+  table.card-table td.bal-neg{color:var(--rust);font-weight:700;}
+  table.card-table td.bal-pos{color:var(--sage);font-weight:700;}
+  .del-x{background:none;border:none;color:var(--rust);font-size:12px;padding:0;}
 </style>
 </head>
 <body>
 
 <!-- ============ CONFIG: replace with your Supabase project values ============ -->
 <script>
-  const SUPABASE_URL = "https://YOUR-PROJECT-REF.supabase.co";
-  const SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";
+  const SUPABASE_URL = "https://kapbrbuxdaqmuhfxtklq.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_RVl0TxnIcUTNjlmRDsARVg_GzwGNzV2";
 </script>
 <!-- ============================================================================ -->
 
@@ -150,6 +161,9 @@ const T = {
     confirmDelete:'Delete this record? This cannot be undone.', yes:'Yes, delete', no:'No, keep it',
     langToggle:'اردو', sharedNotice:'Your data is private to your school account — no other school can see it.',
     enterAmount:'Enter amount',
+    lastBalance:'Last Balance', schoolFeeCol:'School Fee', sportsFund:'Sports Fund', admissionFeeCol:'Admission Fee',
+    examFeeCol:'Annual Exam Fee', totalDuesCol:'Total Dues', totalPaidCol:'Total Paid', balanceCol:'Balance',
+    receiptNo:'Receipt No', dateCol:'Date', addEntry:'Add Month Entry', optional:'optional',
     // Auth
     signUpTitle:'Create your school account', signUpDesc:'Register your school to start using the system.',
     logInTitle:'Log In', logInDesc:'Log in to your school account.',
@@ -181,6 +195,9 @@ const T = {
     confirmDelete:'یہ ریکارڈ حذف کریں؟ یہ واپس نہیں ہو سکتا۔', yes:'ہاں، حذف کریں', no:'نہیں',
     langToggle:'English', sharedNotice:'آپ کا ڈیٹا صرف آپ کے اسکول کے اکاؤنٹ تک محدود ہے — کوئی اور اسکول اسے نہیں دیکھ سکتا۔',
     enterAmount:'رقم درج کریں',
+    lastBalance:'پچھلا بیلنس', schoolFeeCol:'اسکول فیس', sportsFund:'اسپورٹس فنڈ', admissionFeeCol:'داخلہ فیس',
+    examFeeCol:'سالانہ امتحان فیس', totalDuesCol:'کل واجب الادا', totalPaidCol:'کل ادا شدہ', balanceCol:'بیلنس',
+    receiptNo:'رسید نمبر', dateCol:'تاریخ', addEntry:'ماہانہ اندراج شامل کریں', optional:'اختیاری',
     signUpTitle:'اپنا اسکول اکاؤنٹ بنائیں', signUpDesc:'سسٹم استعمال کرنے کے لیے اپنا اسکول رجسٹر کریں۔',
     logInTitle:'لاگ ان کریں', logInDesc:'اپنے اسکول اکاؤنٹ میں لاگ ان کریں۔',
     schoolName:'اسکول کا نام', email:'ای میل ایڈریس', password:'پاس ورڈ', confirmPassword:'پاس ورڈ کی تصدیق',
@@ -555,44 +572,103 @@ async function submitAddStudent() {
 
 function openStudentDetail(id) {
   const s = DATA.students.find(x=>x.id===id);
-  const payments = studentPayments(id).slice().sort((a,b)=> new Date(b.pay_date)-new Date(a.pay_date));
-  const totalPaid = payments.reduce((a,b)=>a+Number(b.amount),0);
+  const entries = studentPayments(id).slice().sort((a,b)=> (a.month>b.month?1:a.month<b.month?-1:0) || (new Date(a.pay_date)-new Date(b.pay_date)));
+
+  // Compute running ledger: last balance carries forward from previous row's balance
+  let running = 0;
+  const rows = entries.map(e => {
+    const lastBalance = running;
+    const totalDues = lastBalance + Number(e.school_fee||0) + Number(e.sports_fund||0) + Number(e.admission_fee||0) + Number(e.exam_fee||0);
+    const totalPaid = Number(e.amount||0);
+    const balance = totalDues - totalPaid;
+    running = balance;
+    return { e, lastBalance, totalDues, totalPaid, balance };
+  });
+  const currentBalance = running;
+  const totalPaidAllTime = entries.reduce((a,b)=>a+Number(b.amount||0),0);
+
   showModal(s.name, `
     <div style="font-size:12px;opacity:.7;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:12px;">
       <span>${esc(t.className)}: ${esc(s.class_name||'')}</span>
       <span>${esc(t.fatherName)}: ${esc(s.father_name||'')}</span>
       <span>${esc(t.monthlyFee)}: ₨${fmt(s.monthly_fee)}</span>
     </div>
-    <div class="greenbox"><div class="lbl">${esc(t.totalCollectedAllTime)}</div><div class="val">₨${fmt(totalPaid)}</div></div>
-    <div class="section-title" style="margin-top:0;">${esc(t.markPaid)}</div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <div class="greenbox" style="flex:1;margin-bottom:0;"><div class="lbl">${esc(t.totalCollectedAllTime)}</div><div class="val">₨${fmt(totalPaidAllTime)}</div></div>
+      <div class="greenbox" style="flex:1;margin-bottom:0;background:${currentBalance>0?'#FBEAE5':'#EAF2EC'};">
+        <div class="lbl" style="color:${currentBalance>0?'var(--rust)':'var(--sage)'};">${esc(t.balanceCol)}</div>
+        <div class="val" style="color:${currentBalance>0?'var(--rust)':'var(--sage)'};">₨${fmt(currentBalance)}</div>
+      </div>
+    </div>
+
+    <h4 class="section-title" style="margin-top:0;">${esc(t.addEntry)}</h4>
     <div class="row2">
       <input id="p-month" type="month" value="${monthKey()}">
-      <input id="p-amount" type="number" placeholder="${esc(t.enterAmount)}" value="${s.monthly_fee||''}">
+      <input id="p-receipt" placeholder="${esc(t.receiptNo)} (${esc(t.optional)})">
     </div>
-    <div style="margin-top:8px;"><input id="p-date" type="date" value="${todayISO()}"></div>
-    <div style="margin-top:8px;"><button class="btn-primary" onclick="submitFeePayment('${id}')">+ ${esc(t.save)}</button></div>
-    <div class="section-title">${esc(t.feeLedger)}</div>
-    <div class="ledger">
-      ${payments.length===0 ? `<div style="padding:10px;text-align:center;font-size:12px;opacity:.5;">—</div>` :
-        payments.map(p=>`
-          <div class="ledger-row">
-            <div style="font-size:12px;">${esc(monthLabel(p.month))} <span style="opacity:.5;">· ${esc(p.pay_date)}</span></div>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <span class="amt-pos">₨${fmt(p.amount)}</span>
-              <button class="del-btn" onclick="deleteFeePayment('${p.id}','${id}')">✕</button>
-            </div>
-          </div>`).join('')}
+    <div class="row2" style="margin-top:8px;">
+      <label style="margin-bottom:0;"><span>${esc(t.schoolFeeCol)}</span><input id="p-schoolfee" type="number" value="${s.monthly_fee||0}"></label>
+      <label style="margin-bottom:0;"><span>${esc(t.sportsFund)}</span><input id="p-sports" type="number" value="0"></label>
     </div>
+    <div class="row2" style="margin-top:8px;">
+      <label style="margin-bottom:0;"><span>${esc(t.admissionFeeCol)}</span><input id="p-admission" type="number" value="0"></label>
+      <label style="margin-bottom:0;"><span>${esc(t.examFeeCol)}</span><input id="p-exam" type="number" value="0"></label>
+    </div>
+    <div class="row2" style="margin-top:8px;">
+      <label style="margin-bottom:0;"><span>${esc(t.totalPaidCol)}</span><input id="p-amount" type="number" placeholder="${esc(t.enterAmount)}" value="${s.monthly_fee||''}"></label>
+      <label style="margin-bottom:0;"><span>${esc(t.dateCol)}</span><input id="p-date" type="date" value="${todayISO()}"></label>
+    </div>
+    <div style="margin-top:10px;"><button class="btn-primary" onclick="submitFeePayment('${id}')">+ ${esc(t.save)}</button></div>
+
+    <h4 class="section-title">${esc(t.feeLedger)}</h4>
+    ${rows.length===0 ? `<div style="padding:10px;text-align:center;font-size:12px;opacity:.5;">—</div>` : `
+    <div class="card-table-wrap">
+      <table class="card-table">
+        <thead><tr>
+          <th>${esc(t.month)}</th><th>${esc(t.lastBalance)}</th><th>${esc(t.schoolFeeCol)}</th>
+          <th>${esc(t.sportsFund)}</th><th>${esc(t.admissionFeeCol)}</th><th>${esc(t.examFeeCol)}</th>
+          <th>${esc(t.totalDuesCol)}</th><th>${esc(t.totalPaidCol)}</th><th>${esc(t.balanceCol)}</th>
+          <th>${esc(t.receiptNo)}</th><th>${esc(t.dateCol)}</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r=>`
+            <tr>
+              <td class="mo">${esc(monthLabel(r.e.month))}</td>
+              <td>₨${fmt(r.lastBalance)}</td>
+              <td>₨${fmt(r.e.school_fee)}</td>
+              <td>₨${fmt(r.e.sports_fund)}</td>
+              <td>₨${fmt(r.e.admission_fee)}</td>
+              <td>₨${fmt(r.e.exam_fee)}</td>
+              <td>₨${fmt(r.totalDues)}</td>
+              <td>₨${fmt(r.totalPaid)}</td>
+              <td class="${r.balance>0?'bal-neg':'bal-pos'}">₨${fmt(r.balance)}</td>
+              <td>${esc(r.e.receipt_no||'—')}</td>
+              <td>${esc(r.e.pay_date||'')}</td>
+              <td><button class="del-x" onclick="deleteFeePayment('${r.e.id}','${id}')">✕</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`}
     <div style="margin-top:16px;"><button class="btn-ghost danger" onclick="confirmDelete('student','${id}')">${esc(t.delete)}</button></div>
   `);
 }
 
 async function submitFeePayment(studentId) {
   const month = document.getElementById('p-month').value;
+  const schoolFee = document.getElementById('p-schoolfee').value || 0;
+  const sportsFund = document.getElementById('p-sports').value || 0;
+  const admissionFee = document.getElementById('p-admission').value || 0;
+  const examFee = document.getElementById('p-exam').value || 0;
   const amount = document.getElementById('p-amount').value;
+  const receiptNo = document.getElementById('p-receipt').value;
   const date = document.getElementById('p-date').value;
-  if (!amount) return;
-  await sb.from('fee_payments').insert({ owner_id: CURRENT_USER.id, student_id: studentId, month, amount: Number(amount), pay_date: date });
+  if (!month || amount === '') return;
+  await sb.from('fee_payments').insert({
+    owner_id: CURRENT_USER.id, student_id: studentId, month,
+    school_fee: Number(schoolFee), sports_fund: Number(sportsFund),
+    admission_fee: Number(admissionFee), exam_fee: Number(examFee),
+    amount: Number(amount), receipt_no: receiptNo || null, pay_date: date
+  });
   await loadAllData(); openStudentDetail(studentId);
 }
 async function deleteFeePayment(paymentId, studentId) {
